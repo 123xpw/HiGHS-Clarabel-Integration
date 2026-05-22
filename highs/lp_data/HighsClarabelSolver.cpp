@@ -51,6 +51,7 @@
 #include "lp_data/HighsLpSolverObject.h"
 #include "lp_data/HighsModelUtils.h"
 #include "lp_data/HighsOptions.h"
+#include "lp_data/HighsSolution.h"
 #include "model/HighsHessian.h"
 #include "presolve/ICrashX.h"
 
@@ -476,10 +477,23 @@ HighsStatus solveLpClarabel(HighsLpSolverObject& solver_object,
         }
       }
 
+      if (quality_ok && !is_qp) {
+        HighsInfo kkt_info;
+        getKktFailures(opts, false, lp, lp.col_cost_, sol, kkt_info);
+        const double ktol = opts.kkt_tolerance > 0 ? opts.kkt_tolerance : 1e-7;
+        if (kkt_info.num_relative_primal_infeasibilities > 0 ||
+            kkt_info.num_relative_dual_infeasibilities > 0 ||
+            kkt_info.num_relative_primal_residual_errors > 0 ||
+            kkt_info.num_relative_dual_residual_errors > 0 ||
+            std::fabs(kkt_info.primal_dual_objective_error) > ktol) {
+          quality_ok = false;
+        }
+      }
+
       if (!quality_ok) {
         highsLogUser(opts.log_options, HighsLogType::kWarning,
-                     "Clarabel: primal solution quality insufficient "
-                     "(non-finite, magnitude > 1e20, or bound violation > tol x100) "
+                     "Clarabel: solution quality insufficient "
+                     "(bounds, residuals, or objective gap exceed tolerance) "
                      "— routing to simplex cleanup\n");
         clarabel_model_status = HighsModelStatus::kUnknown;
         feasible = false;  // skip crossover to avoid potential crash

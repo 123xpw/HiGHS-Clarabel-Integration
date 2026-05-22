@@ -23,7 +23,7 @@ if [[ ! -x "$HIGHS_BIN" ]]; then
 fi
 
 pass=0; fail=0; skip=0
-declare -a failed_cases
+failed_cases=()
 
 for mps in "$INST_DIR"/*.mps; do
   [[ -f "$mps" ]] || continue
@@ -37,13 +37,13 @@ for mps in "$INST_DIR"/*.mps; do
   fi
 
   # Skip MIP instances
-  if grep -qi "INTEGERS\|BINARY\|INT\b" "$mps" 2>/dev/null; then
+  if grep -Eqi "INTORG|INTEND|MARKER|BINARY|INTEGER" "$mps" 2>/dev/null; then
     (( skip++ )) || true
     continue
   fi
 
   # Skip QP instances
-  if grep -qi "QUADRATIC\|QMATRIX\|QSECTION" "$mps" 2>/dev/null; then
+  if grep -Eqi "QUADOBJ|QUADRATIC|QMATRIX|QSECTION" "$mps" 2>/dev/null; then
     (( skip++ )) || true
     continue
   fi
@@ -51,25 +51,19 @@ for mps in "$INST_DIR"/*.mps; do
   name=$(basename "$mps" .mps)
 
   # Solve with default solver
-  default_out=$("$HIGHS_BIN" --options_file /dev/null \
-                              --solver choose \
-                              --output_flag false \
-                              "$mps" 2>&1 || true)
-  default_status=$(echo "$default_out" | grep -oP "Model   status      : \K[^\n]+" | head -1)
-  default_obj=$(echo    "$default_out" | grep -oP "Objective value     :\s*\K[-0-9.eE+]+" | head -1)
+  default_out=$("$HIGHS_BIN" --solver choose "$mps" 2>&1 || true)
+  default_status=$(echo "$default_out" | grep -oP "Model\s+status\s*:\s*\K[^\n]+" | head -1 || true)
+  default_obj=$(echo    "$default_out" | grep -oP "Objective value\s*:\s*\K[-0-9.eE+]+" | head -1 || true)
 
   # Solve with Clarabel
-  cla_out=$("$HIGHS_BIN" --options_file /dev/null \
-                           --solver clarabel \
-                           --output_flag false \
-                           "$mps" 2>&1 || true)
-  cla_status=$(echo "$cla_out" | grep -oP "Model   status      : \K[^\n]+" | head -1)
-  cla_obj=$(echo    "$cla_out" | grep -oP "Objective value     :\s*\K[-0-9.eE+]+" | head -1)
+  cla_out=$("$HIGHS_BIN" --solver clarabel "$mps" 2>&1 || true)
+  cla_status=$(echo "$cla_out" | grep -oP "Model\s+status\s*:\s*\K[^\n]+" | head -1 || true)
+  cla_obj=$(echo    "$cla_out" | grep -oP "Objective value\s*:\s*\K[-0-9.eE+]+" | head -1 || true)
 
   # Compare
   status_match=0
   obj_match=0
-  [[ "$default_status" == "$cla_status" ]] && status_match=1
+  [[ -n "$default_status" && -n "$cla_status" && "$default_status" == "$cla_status" ]] && status_match=1
 
   if [[ "$default_status" == *"Optimal"* && "$cla_status" == *"Optimal"* ]]; then
     if [[ -n "$default_obj" && -n "$cla_obj" ]]; then

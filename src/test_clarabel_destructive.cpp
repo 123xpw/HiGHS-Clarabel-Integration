@@ -118,8 +118,8 @@ void test_free_rows_do_not_constrain() {
         "free row does not move bound optimum");
 }
 
-void test_qp_clarabel_gap_is_detectable() {
-  std::printf("\n-- QP solver=clarabel currently falls back to QP ASM --\n");
+void test_qp_route_uses_clarabel() {
+  std::printf("\n-- QP solver=clarabel routes through Clarabel --\n");
   Highs h;
   h.setOptionValue("output_flag", false);
   h.setOptionValue("solver", "clarabel");
@@ -139,8 +139,8 @@ void test_qp_clarabel_gap_is_detectable() {
   check(run_status == HighsStatus::kOk, "run status is kOk");
   check(h.getModelStatus() == HighsModelStatus::kOptimal,
         "model status is optimal");
-  check(info.qp_iteration_count > 0,
-        "QP ASM was used; solver=clarabel is not a QP Clarabel route yet");
+  check(info.qp_iteration_count <= 0,
+        "QP ASM was not used for solver=clarabel");
   check(approx(sol.col_value[0], 3.0, 1e-4), "QP optimum x=3");
   check(approx(objective(h), -4.5, 1e-4), "QP objective includes Hessian");
 }
@@ -181,7 +181,7 @@ int main() {
   test_negative_row_bounds();
   test_unbounded_status();
   test_free_rows_do_not_constrain();
-  test_qp_clarabel_gap_is_detectable();
+  test_qp_route_uses_clarabel();
   test_mip_root_clarabel();
 
   std::printf("\nResults: %s\n", failures == 0 ? "ALL PASS" : "FAILURES");

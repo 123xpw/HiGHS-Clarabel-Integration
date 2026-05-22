@@ -76,4 +76,3 @@ target_compile_features(test_clarabel_destructive PRIVATE cxx_std_14)
 target_link_libraries(test_clarabel_destructive PRIVATE
   ${HIGHS_LINK_TARGET}
 )
-

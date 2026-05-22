@@ -74,7 +74,8 @@ void HighsClarabelInterface::fillEigenHessian(
     for (int j = 0; j < n; ++j) {
       for (int k = static_cast<int>(H.start_[j]);
            k < static_cast<int>(H.start_[j + 1]); ++k) {
-        trips.emplace_back(static_cast<int>(H.index_[k]), j, H.value_[k]);
+        const int i = static_cast<int>(H.index_[k]);
+        trips.emplace_back(std::min(i, j), std::max(i, j), H.value_[k]);
       }
     }
   } else {

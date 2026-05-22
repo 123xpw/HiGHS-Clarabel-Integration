@@ -3974,7 +3974,7 @@ HighsStatus Highs::callSolveQp() {
     return HighsStatus::kError;
   }
 
-  HighsStatus return_status;
+  HighsStatus return_status = HighsStatus::kOk;
 
   // Choose solver
   bool use_hipo = false;
