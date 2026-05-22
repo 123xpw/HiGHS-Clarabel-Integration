@@ -78,6 +78,7 @@ struct ClarabelInput {
   std::vector<clarabel::SupportedConeT<double>>   cones;
   clarabel::DefaultSettings<double>               settings;
   std::vector<RowEntry>                           row_map;
+  std::vector<double>                             col_shift;  // x = x' + shift
   int      num_highs_cols;
   int      num_highs_rows;
   ObjSense sense;
@@ -110,7 +111,10 @@ static ClarabelInput buildClarabelInput(const HighsLp&        lp,
     for (int j = 0; j < dim; ++j) {
       for (int k = static_cast<int>(hessian_ptr->start_[j]);
            k < static_cast<int>(hessian_ptr->start_[j + 1]); ++k) {
-        p_trips.emplace_back(static_cast<int>(hessian_ptr->index_[k]), j,
+        const int i = static_cast<int>(hessian_ptr->index_[k]);
+        // HiGHS Hessian data may be stored as either triangular orientation
+        // depending on the source format. Clarabel expects the upper triangle.
+        p_trips.emplace_back(std::min(i, j), std::max(i, j),
                              sign * hessian_ptr->value_[k]);
       }
     }
@@ -121,6 +125,33 @@ static ClarabelInput buildClarabelInput(const HighsLp&        lp,
   in.num_highs_rows = num_row;
   in.sense          = lp.sense_;
   in.obj_offset     = lp.offset_;
+
+  // ── Variable shift: x = x' + shift (LP only) ───────────────────────────
+  //
+  // Shifting variables so their effective lower bound is 0 ensures that all
+  // kColLB Clarabel rows have b = 0 (NonnegCone with b < 0 triggers a known
+  // Clarabel crash on some instances such as 25fv47).  Skipped for QP because
+  // the quadratic term would also need a q and offset correction.
+  const auto& mat = lp.a_matrix_;
+  in.col_shift.assign(n, 0.0);
+  std::vector<double> row_b_adj(num_row, 0.0);
+  if (hessian_ptr == nullptr || hessian_ptr->numNz() == 0) {
+    for (int j = 0; j < n; ++j)
+      if (!isNInf(cl[j])) in.col_shift[j] = cl[j];
+
+    // Adjust objective offset: c^T (x' + shift) + offset = c^T x' + (c^T shift + offset)
+    for (int j = 0; j < n; ++j)
+      in.obj_offset += lp.col_cost_[j] * in.col_shift[j];
+
+    // Compute A*shift for RHS adjustments: new b_i = b_i - A[i,:]*shift
+    for (int j = 0; j < n; ++j) {
+      if (in.col_shift[j] == 0.0) continue;
+      for (int k = static_cast<int>(mat.start_[j]);
+           k < static_cast<int>(mat.start_[j + 1]); ++k)
+        row_b_adj[static_cast<int>(mat.index_[k])] +=
+            mat.value_[k] * in.col_shift[j];
+    }
+  }
 
   // ── cost vector q ────────────────────────────────────────────────────────
   {
@@ -175,7 +206,7 @@ static ClarabelInput buildClarabelInput(const HighsLp&        lp,
   for (int i = 0; i < num_row; ++i)
     for (const auto& ref : r2c[i])
       if (ref.kind == RowKind::kRowEq) {
-        in.b[ref.idx] = rl[i];
+        in.b[ref.idx] = rl[i] - row_b_adj[i];
         in.cones.push_back(clarabel::ZeroConeT<double>(1));
         in.row_map.push_back({RowKind::kRowEq, i});
       }
@@ -183,13 +214,15 @@ static ClarabelInput buildClarabelInput(const HighsLp&        lp,
   for (int i = 0; i < num_row; ++i)
     for (const auto& ref : r2c[i])
       if (ref.kind != RowKind::kRowEq) {
-        in.b[ref.idx] = (ref.kind == RowKind::kRowUB) ? ru[i] : -rl[i];
+        if (ref.kind == RowKind::kRowUB)
+          in.b[ref.idx] = ru[i] - row_b_adj[i];
+        else  // kRowLB: -A*x' <= -lo  →  b = -lo + A*shift
+          in.b[ref.idx] = -rl[i] + row_b_adj[i];
         in.cones.push_back(clarabel::NonnegativeConeT<double>(1));
         in.row_map.push_back({ref.kind, i});
       }
 
   // ── Triplets for the LP portion of Ã ─────────────────────────────────────
-  const auto& mat = lp.a_matrix_;
   std::vector<Eigen::Triplet<double>> trips;
   trips.reserve(mat.value_.size() * 2 + n_col_rows);
 
@@ -207,14 +240,16 @@ static ClarabelInput buildClarabelInput(const HighsLp&        lp,
   for (int j = 0; j < n; ++j) {
     if (!isHInf(cu[j])) {
       trips.emplace_back(col_row, j, +1.0);
-      in.b[col_row] = cu[j];
+      // After shift: x'[j] <= cu[j] - shift[j]
+      in.b[col_row] = cu[j] - in.col_shift[j];
       in.cones.push_back(clarabel::NonnegativeConeT<double>(1));
       in.row_map.push_back({RowKind::kColUB, j});
       ++col_row;
     }
     if (!isNInf(cl[j])) {
       trips.emplace_back(col_row, j, -1.0);
-      in.b[col_row] = -cl[j];
+      // After shift: x'[j] >= 0  (shift makes lb = 0)
+      in.b[col_row] = 0.0;
       in.cones.push_back(clarabel::NonnegativeConeT<double>(1));
       in.row_map.push_back({RowKind::kColLB, j});
       ++col_row;
@@ -301,16 +336,17 @@ static double writeClarabelSolution(
   const double es  = (in.sense == ObjSense::kMinimize) ? 1.0 : -1.0;
   const double obj = es * csol.obj_val + in.obj_offset;
 
-  // Primal solution
-  for (int j = 0; j < nc; ++j) highs_solution.col_value[j] = csol.x[j];
+  // Primal solution: unshift x' back to original variables
+  for (int j = 0; j < nc; ++j)
+    highs_solution.col_value[j] = csol.x[j] + in.col_shift[j];
 
-  // Row activities: Ax (CSC traversal)
+  // Row activities: A*x (CSC traversal using unshifted col_value)
   const auto& mat = lp.a_matrix_;
   for (int j = 0; j < nc; ++j)
     for (int k = static_cast<int>(mat.start_[j]);
          k < static_cast<int>(mat.start_[j + 1]); ++k)
       highs_solution.row_value[static_cast<int>(mat.index_[k])] +=
-          mat.value_[k] * csol.x[j];
+          mat.value_[k] * highs_solution.col_value[j];
 
   // Duals
   const int total_rows = static_cast<int>(in.row_map.size());
@@ -400,6 +436,54 @@ HighsStatus solveLpClarabel(HighsLpSolverObject& solver_object,
 
     if (feasible) {
       obj = writeClarabelSolution(csol, in, lp, sol);
+
+      // ── Primal solution quality gate ─────────────────────────────────────
+      //
+      // Clarabel may report Solved while the HiGHS-side residuals still
+      // exceed tolerance (e.g. greenbea), or return numerically extreme
+      // values that crash IPX crossover (e.g. 25fv47 heap corruption).
+      //
+      // Check each col_value / row_value for:
+      //   (a) finiteness and magnitude  < 1e20  (crossover safety)
+      //   (b) primal feasibility within 100 × primal_tolerance for finite bounds
+      //
+      // On failure: mark kUnknown so solveLp() routes to simplex cleanup,
+      // and set feasible=false to skip crossover entirely.
+      const double ptol    = 100.0 * opts.primal_feasibility_tolerance;
+      const double max_val = 1e20;
+      bool quality_ok = true;
+
+      for (int j = 0; quality_ok && j < static_cast<int>(lp.num_col_); ++j) {
+        const double v = sol.col_value[j];
+        if (!std::isfinite(v) || std::fabs(v) > max_val) {
+          quality_ok = false;
+        } else {
+          if (!isNInf(lp.col_lower_[j]) && v < lp.col_lower_[j] - ptol)
+            quality_ok = false;
+          if (!isHInf(lp.col_upper_[j]) && v > lp.col_upper_[j] + ptol)
+            quality_ok = false;
+        }
+      }
+      for (int i = 0; quality_ok && i < static_cast<int>(lp.num_row_); ++i) {
+        const double v = sol.row_value[i];
+        if (!std::isfinite(v) || std::fabs(v) > max_val) {
+          quality_ok = false;
+        } else {
+          if (!isNInf(lp.row_lower_[i]) && v < lp.row_lower_[i] - ptol)
+            quality_ok = false;
+          if (!isHInf(lp.row_upper_[i]) && v > lp.row_upper_[i] + ptol)
+            quality_ok = false;
+        }
+      }
+
+      if (!quality_ok) {
+        highsLogUser(opts.log_options, HighsLogType::kWarning,
+                     "Clarabel: primal solution quality insufficient "
+                     "(non-finite, magnitude > 1e20, or bound violation > tol x100) "
+                     "— routing to simplex cleanup\n");
+        clarabel_model_status = HighsModelStatus::kUnknown;
+        feasible = false;  // skip crossover to avoid potential crash
+      }
     }
   } catch (const std::exception& e) {
     highsLogDev(opts.log_options, HighsLogType::kError,
@@ -422,6 +506,7 @@ HighsStatus solveLpClarabel(HighsLpSolverObject& solver_object,
   //
   // Clarabel is an IPM solver — it produces no simplex basis.
   // Run IPX crossover if the user hasn't disabled it.
+  // Only reached when quality_ok == true (guard above skips this on bad sol).
   const bool run_crossover =
       (opts.run_crossover != kHighsOffString);
   if (run_crossover) {

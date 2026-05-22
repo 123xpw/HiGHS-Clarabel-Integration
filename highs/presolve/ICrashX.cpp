@@ -65,7 +65,24 @@ HighsStatus callCrossover(const HighsOptions& options, const HighsLp& lp,
   }
 
   // Set x values within bounds.
+  // num_col may exceed lp.num_col_ when fillInIpxData introduces slack columns
+  // for doubly-bounded rows.  Initialise those extra slots from row_value so
+  // crossover gets a feasible (not just zero) starting point; then clamp.
   std::vector<double> x(highs_solution.col_value);
+  if ((ipx::Int)x.size() < num_col) {
+    const ipx::Int orig_col = (ipx::Int)x.size();
+    x.resize(num_col, 0.0);
+    // Fill slack variables for doubly-bounded rows in column order.
+    ipx::Int slack_idx = orig_col;
+    for (HighsInt row = 0; row < lp.num_row_ && slack_idx < num_col; ++row) {
+      if (lp.row_lower_[row] > -kHighsInf && lp.row_upper_[row] < kHighsInf &&
+          lp.row_lower_[row] < lp.row_upper_[row]) {
+        x[slack_idx] = (row < (HighsInt)highs_solution.row_value.size())
+                           ? highs_solution.row_value[row] : 0.0;
+        ++slack_idx;
+      }
+    }
+  }
   for (int i = 0; i < num_col; i++) {
     x[i] = std::max(x[i], col_lb[i]);
     x[i] = std::min(x[i], col_ub[i]);
