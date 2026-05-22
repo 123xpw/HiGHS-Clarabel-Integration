@@ -21,8 +21,12 @@
 #ifdef HIGHS_USE_CLARABEL
 
 #include "lp_data/HighsLpSolverObject.h"
+#include "model/HighsHessian.h"
 
-// Solve the LP in solver_object.lp_ with Clarabel.
+// Solve the LP (or QP) in solver_object.lp_ with Clarabel.
+//
+// hessian_ptr: when non-null, the quadratic term 1/2 x^T H x is included
+//   (QP mode). When null, P = 0 and the problem is treated as LP.
 //
 // On success (optimal / almost-optimal):
 //   solver_object.solution_.value_valid = true
@@ -35,7 +39,8 @@
 //   solution_.value_valid = false
 //
 // run_crossover option is respected: "on" or "choose" → calls callCrossover().
-HighsStatus solveLpClarabel(HighsLpSolverObject& solver_object);
+HighsStatus solveLpClarabel(HighsLpSolverObject& solver_object,
+                             const HighsHessian* hessian_ptr = nullptr);
 
 #endif  // HIGHS_USE_CLARABEL
 #endif  // LP_DATA_HIGHS_CLARABEL_SOLVER_H_

@@ -117,6 +117,47 @@ static void test_max_lp() {
               sol.col_value[0], obj);
 }
 
+// ── Test 5: QP routing  min 0.5*(x^2+y^2)  s.t. x+y >= 1, x,y >= 0 ─────────
+// Optimal: x=0.5, y=0.5, obj = 0.25
+#define CHECK(cond, msg) \
+  do { if (!(cond)) { std::fprintf(stderr, "FAIL: %s\n", msg); std::abort(); } } while(0)
+
+static void test_qp() {
+  Highs h;
+  h.setOptionValue("output_flag", false);
+  h.addVar(0.0, 1e30);  // x
+  h.addVar(0.0, 1e30);  // y
+  h.changeColCost(0, 0.0);
+  h.changeColCost(1, 0.0);
+
+  // Hessian: diag(1,1) in upper-triangular CSC  =>  0.5*x^T Q x = 0.5*(x^2+y^2)
+  // Use HighsInt (may be int64_t) to match the API signature.
+  std::vector<HighsInt> q_start = {0, 1, 2};
+  std::vector<HighsInt> q_idx   = {0, 1};
+  std::vector<double>   q_val   = {1.0, 1.0};
+  HighsStatus hs = h.passHessian(2, 2, 1 /*kTriangular*/,
+                                  q_start.data(), q_idx.data(), q_val.data());
+  CHECK(hs == HighsStatus::kOk, "passHessian failed");
+
+  // x + y >= 1
+  {
+    std::vector<HighsInt> idx = {0, 1};
+    std::vector<double>   val = {1.0, 1.0};
+    h.addRow(1.0, 1e30, 2, idx.data(), val.data());
+  }
+  h.setOptionValue("solver", "clarabel");
+  h.run();
+
+  CHECK(h.getModelStatus() == HighsModelStatus::kOptimal, "test_qp: not optimal");
+  const HighsSolution& sol = h.getSolution();
+  CHECK(approxEq(sol.col_value[0], 0.5, 1e-3), "test_qp: x != 0.5");
+  CHECK(approxEq(sol.col_value[1], 0.5, 1e-3), "test_qp: y != 0.5");
+  double obj = getObj(h);
+  CHECK(approxEq(obj, 0.25, 1e-3), "test_qp: obj != 0.25");
+  std::printf("  test_qp: PASS (x=%.4g y=%.4g obj=%.4g)\n",
+              sol.col_value[0], sol.col_value[1], obj);
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 int main() {
   std::printf("=== M4 Integration Tests (solver = clarabel) ===\n");
@@ -124,6 +165,7 @@ int main() {
   test_infeasible_lp();
   test_dual();
   test_max_lp();
+  test_qp();
   std::printf("=== All M4 tests PASSED ===\n");
   return 0;
 }

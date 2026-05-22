@@ -1177,6 +1177,17 @@ HighsLpRelaxation::Status HighsLpRelaxation::run(bool resolve_on_error) {
       lpsolver.clearSolver();
       lpsolver.setOptionValue("solver", kSimplexString);
       use_simplex = true;
+    } else if (!lpsolver.getBasis().valid) {
+      // Clarabel succeeded numerically but crossover failed — no valid simplex
+      // basis is available for evaluateRootNode().  Fall back to simplex so
+      // that B&B can read a proper basis.
+      highsLogDev(
+          mipsolver.options_mip_->log_options, HighsLogType::kWarning,
+          "HighsLpRelaxation::run Clarabel crossover produced no valid basis "
+          "at root node — falling back to simplex\n");
+      lpsolver.clearSolver();
+      lpsolver.setOptionValue("solver", kSimplexString);
+      use_simplex = true;
     }
   }
   if (use_simplex) {

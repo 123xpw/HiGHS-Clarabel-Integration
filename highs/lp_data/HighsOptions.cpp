@@ -1173,5 +1173,6 @@ bool solverValidForMip(const std::string& solver) {
 }
 bool solverValidForQp(const std::string& solver) {
   return solver == kHighsChooseString || solver == kQpAsmString ||
-         solver == kIpmString || solver == kHipoString;
+         solver == kIpmString         || solver == kHipoString  ||
+         solver == kClarabelString;
 }

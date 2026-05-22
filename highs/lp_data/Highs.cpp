@@ -24,6 +24,7 @@
 #include "lp_data/HighsCallbackStruct.h"
 #include "lp_data/HighsInfoDebug.h"
 #include "lp_data/HighsLpSolverObject.h"
+#include "lp_data/HighsClarabelSolver.h"
 #include "lp_data/HighsSolve.h"
 #include "mip/HighsMipSolver.h"
 #include "model/HighsHessianUtils.h"
@@ -3991,7 +3992,36 @@ HighsStatus Highs::callSolveQp() {
   } else
     use_hipo = false;
 
-  if (use_hipo) {
+  // ── Clarabel QP branch ────────────────────────────────────────────────────
+  // NOTE: does NOT early-return on success — falls through to the common
+  // post-processing block (objectiveValue / getKktFailures / info_.valid)
+  // below, which correctly computes the full QP objective from model_.hessian_.
+  if (useClarabel(options_.solver)) {
+#ifdef HIGHS_USE_CLARABEL
+    HighsLpSolverObject solver_object(lp, basis_, solution_, info_,
+                                       ekk_instance_, callback_, options_,
+                                       timer_, sub_solver_call_time_);
+    HighsStatus call_status;
+    try {
+      call_status = solveLpClarabel(solver_object, &hessian);
+    } catch (const std::exception& exception) {
+      highsLogDev(options_.log_options, HighsLogType::kError,
+                  "Exception %s in solveLpClarabel (QP)\n", exception.what());
+      call_status = HighsStatus::kError;
+    }
+    model_status_ = solver_object.model_status_;
+    return_status = interpretCallStatus(options_.log_options, call_status,
+                                         return_status, "solveLpClarabel-QP");
+    if (return_status == HighsStatus::kError) return return_status;
+    // fall through to common post-processing ↓
+#else
+    highsLogUser(options_.log_options, HighsLogType::kError,
+                 "Clarabel is not available in this build. "
+                 "Reconfigure with -DUSE_CLARABEL=ON.\n");
+    model_status_ = HighsModelStatus::kSolveError;
+    return HighsStatus::kError;
+#endif
+  } else if (use_hipo) {
 #ifdef HIPO
     sub_solver_call_time_.num_call[kSubSolverHipo]++;
     sub_solver_call_time_.run_time[kSubSolverHipo] = -timer_.read();

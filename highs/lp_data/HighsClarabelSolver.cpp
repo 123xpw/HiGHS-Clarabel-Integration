@@ -51,6 +51,7 @@
 #include "lp_data/HighsLpSolverObject.h"
 #include "lp_data/HighsModelUtils.h"
 #include "lp_data/HighsOptions.h"
+#include "model/HighsHessian.h"
 #include "presolve/ICrashX.h"
 
 // ── internal helpers ─────────────────────────────────────────────────────────
@@ -83,8 +84,9 @@ struct ClarabelInput {
   double   obj_offset;
 };
 
-static ClarabelInput buildClarabelInput(const HighsLp&      lp,
-                                         const HighsOptions& opts) {
+static ClarabelInput buildClarabelInput(const HighsLp&        lp,
+                                         const HighsOptions&   opts,
+                                         const HighsHessian*   hessian_ptr = nullptr) {
   const_cast<HighsLp&>(lp).ensureColwise();
   const int n       = static_cast<int>(lp.num_col_);
   const int num_row = static_cast<int>(lp.num_row_);
@@ -94,7 +96,27 @@ static ClarabelInput buildClarabelInput(const HighsLp&      lp,
   const auto& cu = lp.col_upper_;
 
   ClarabelInput in;
-  in.P.resize(n, n);  // zero Hessian (LP)
+  in.P.resize(n, n);  // zero by default; filled below for QP
+
+  // ── Hessian (QP mode) ─────────────────────────────────────────────────────
+  // HiGHS stores Q in upper-triangular CSC (kTriangular format).
+  // Clarabel expects P upper-triangular.  Direct copy; negate for maximization.
+  if (hessian_ptr != nullptr && hessian_ptr->dim_ > 0 &&
+      hessian_ptr->numNz() > 0) {
+    const double sign = (lp.sense_ == ObjSense::kMaximize) ? -1.0 : 1.0;
+    const int dim = static_cast<int>(hessian_ptr->dim_);
+    std::vector<Eigen::Triplet<double>> p_trips;
+    p_trips.reserve(static_cast<size_t>(hessian_ptr->numNz()));
+    for (int j = 0; j < dim; ++j) {
+      for (int k = static_cast<int>(hessian_ptr->start_[j]);
+           k < static_cast<int>(hessian_ptr->start_[j + 1]); ++k) {
+        p_trips.emplace_back(static_cast<int>(hessian_ptr->index_[k]), j,
+                             sign * hessian_ptr->value_[k]);
+      }
+    }
+    in.P.setFromTriplets(p_trips.begin(), p_trips.end());
+    in.P.makeCompressed();
+  }
   in.num_highs_cols = n;
   in.num_highs_rows = num_row;
   in.sense          = lp.sense_;
@@ -321,7 +343,8 @@ static double writeClarabelSolution(
 
 // ── solveLpClarabel ──────────────────────────────────────────────────────────
 
-HighsStatus solveLpClarabel(HighsLpSolverObject& solver_object) {
+HighsStatus solveLpClarabel(HighsLpSolverObject& solver_object,
+                             const HighsHessian*  hessian_ptr) {
   HighsLp&       lp      = solver_object.lp_;
   HighsOptions&  opts    = solver_object.options_;
   HighsSolution& sol     = solver_object.solution_;
@@ -334,13 +357,16 @@ HighsStatus solveLpClarabel(HighsLpSolverObject& solver_object) {
   sol.dual_valid    = false;
   resetModelStatusAndHighsInfo(solver_object);
 
+  const bool is_qp = (hessian_ptr != nullptr && hessian_ptr->dim_ > 0 &&
+                       hessian_ptr->numNz() > 0);
   highsLogUser(opts.log_options, HighsLogType::kInfo,
-               "Solving LP with Clarabel (interior-point)\n");
+               "Solving %s with Clarabel (interior-point)\n",
+               is_qp ? "QP" : "LP");
 
   // ── M2: build Clarabel input ──────────────────────────────────────────────
   ClarabelInput in;
   try {
-    in = buildClarabelInput(lp, opts);
+    in = buildClarabelInput(lp, opts, hessian_ptr);
   } catch (const std::exception& e) {
     highsLogDev(opts.log_options, HighsLogType::kError,
                 "Exception in Clarabel input construction: %s\n", e.what());

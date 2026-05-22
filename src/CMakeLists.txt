@@ -70,3 +70,10 @@ target_link_libraries(test_m_mip_integration PRIVATE
   ${HIGHS_LINK_TARGET}
 )
 
+# ── destructive end-to-end integration test ─────────────────────────────────
+add_executable(test_clarabel_destructive test_clarabel_destructive.cpp)
+target_compile_features(test_clarabel_destructive PRIVATE cxx_std_14)
+target_link_libraries(test_clarabel_destructive PRIVATE
+  ${HIGHS_LINK_TARGET}
+)
+
