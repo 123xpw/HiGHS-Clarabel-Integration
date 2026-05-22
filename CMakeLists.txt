@@ -741,6 +741,12 @@ if(FAST_BUILD AND HIGHS_COVERAGE)
 
 endif()
 
+# Clarabel solver integration (optional; requires Rust/cargo toolchain)
+option(USE_CLARABEL "Enable Clarabel solver integration (requires Rust/cargo)" OFF)
+if(USE_CLARABEL)
+  include(clarabel-integration)
+endif()
+
 if(NOT FAST_BUILD)
   # For the moment keep above coverage part in case we are testing at CI.
   option(CI "CI extended tests" ON)
@@ -855,6 +861,10 @@ if(NOT FAST_BUILD)
     add_subdirectory(check)
   endif()
 
+  if(USE_CLARABEL)
+    add_subdirectory(src)
+  endif()
+
 else(FAST_BUILD)
   message(STATUS "FAST_BUILD set to on.")
 
@@ -879,6 +889,10 @@ else(FAST_BUILD)
   if(BUILD_TESTING)
     enable_testing()
     add_subdirectory(check)
+  endif()
+
+  if(USE_CLARABEL)
+    add_subdirectory(src)
   endif()
 
   include(python-highs)
