@@ -276,6 +276,7 @@ const string kIpxString = "ipx";
 const string kPdlpString = "pdlp";
 const string kQpAsmString = "qpasm";
 const string kHiPdlpString = "hipdlp";
+const string kClarabelString = "clarabel";
 
 const HighsInt kKeepNRowsDeleteRows = -1;
 const HighsInt kKeepNRowsDeleteEntries = 0;
@@ -738,7 +739,7 @@ class HighsOptions : public HighsOptionsStruct {
     record_string = new OptionRecordString(
         kSolverString,
         "LP/QP solver: \"choose\", \"simplex\", "
-        "\"ipm\", \"ipx\", \"hipo\", \"pdlp\", \"qpasm\" or \"hipdlp\", ",
+        "\"ipm\", \"ipx\", \"hipo\", \"pdlp\", \"qpasm\", \"hipdlp\" or \"clarabel\"",
         advanced, &solver, kHighsChooseString);
     records.push_back(record_string);
 
@@ -1269,7 +1270,7 @@ class HighsOptions : public HighsOptionsStruct {
     record_string =
         new OptionRecordString(kMipLpSolverString,
                                "MIP LP solver: \"choose\", \"simplex\", "
-                               "\"ipm\", \"ipx\" or \"hipo\"",
+                               "\"ipm\", \"ipx\", \"hipo\" or \"clarabel\"",
                                advanced, &mip_lp_solver, kHighsChooseString);
     records.push_back(record_string);
 

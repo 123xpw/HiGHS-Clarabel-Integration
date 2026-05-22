@@ -1,0 +1,7 @@
+[submodule "extern/Clarabel.cpp"]
+	path = extern/Clarabel.cpp
+	url = https://github.com/oxfordcontrol/Clarabel.cpp.git
+[submodule "extern/eigen"]
+	path = extern/eigen
+	url = https://gitlab.com/libeigen/eigen.git
+	branch = 3.4

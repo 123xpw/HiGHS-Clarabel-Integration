@@ -55,6 +55,16 @@ if(NOT FAST_BUILD)
     set(CONF_DEPENDENCIES "include(CMakeFindDependencyMacro)\nfind_dependency(ZLIB)")
   endif()
 
+  if(USE_CLARABEL)
+    target_sources(libhighs PRIVATE lp_data/HighsClarabelSolver.cpp)
+    target_link_libraries(libhighs PRIVATE libclarabel_c_static ${CLARABEL_SYSTEM_LIBS})
+    target_include_directories(libhighs PRIVATE
+      $<BUILD_INTERFACE:${CLARABEL_CPP_INCLUDE_DIR}>
+      $<BUILD_INTERFACE:${CLARABEL_EIGEN_INCLUDE_DIR}>
+    )
+    target_compile_definitions(libhighs PRIVATE HIGHS_USE_CLARABEL)
+  endif()
+
   # set the install rpath to the installed destination
   if(APPLE)
       set_target_properties(libhighs PROPERTIES INSTALL_RPATH "@loader_path")
@@ -348,6 +358,16 @@ else()
       $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/extern/zstr>
     )
     target_link_libraries(highs PRIVATE ZLIB::ZLIB)
+  endif()
+
+  if(USE_CLARABEL)
+    target_sources(highs PRIVATE lp_data/HighsClarabelSolver.cpp)
+    target_link_libraries(highs PRIVATE libclarabel_c_static ${CLARABEL_SYSTEM_LIBS})
+    target_include_directories(highs PRIVATE
+      $<BUILD_INTERFACE:${CLARABEL_CPP_INCLUDE_DIR}>
+      $<BUILD_INTERFACE:${CLARABEL_EIGEN_INCLUDE_DIR}>
+    )
+    target_compile_definitions(highs PRIVATE HIGHS_USE_CLARABEL)
   endif()
 
   # install the header files of highs

@@ -1105,6 +1105,10 @@ HighsLpRelaxation::Status HighsLpRelaxation::run(bool resolve_on_error) {
       use_hipo = false;
 #endif
       use_solver = use_hipo ? kHipoString : kIpxString;
+    } else if (useClarabel(mip_lp_solver) && !this->solved_first_lp) {
+      // M_MIP: route root-node first LP through Clarabel (IPM).
+      // Only on the first solve; subsequent resolves use simplex.
+      use_solver = kClarabelString;
     } else {
       use_solver = kSimplexString;
     }
@@ -1112,8 +1116,9 @@ HighsLpRelaxation::Status HighsLpRelaxation::run(bool resolve_on_error) {
   HighsStatus callstatus;
   // Now allowing the use of IPM at the root node
   lpsolver.setOptionValue("solver", use_solver);
-  bool use_ipm = useIpm(use_solver);
-  bool use_simplex = !use_ipm;
+  bool use_ipm     = useIpm(use_solver);
+  bool use_clarabel = useClarabel(use_solver);
+  bool use_simplex  = !use_ipm && !use_clarabel;
   if (use_ipm) {
     assert(!valid_basis);
     const bool ipm_logging = false;
@@ -1146,6 +1151,30 @@ HighsLpRelaxation::Status HighsLpRelaxation::run(bool resolve_on_error) {
           mipsolver.options_mip_->log_options, HighsLogType::kInfo,
           "HighsLpRelaxation::run HiPO has failed : status = %s Try IPX\n",
           lpsolver.modelStatusToString(lpsolver.getModelStatus()).c_str());
+      lpsolver.setOptionValue("solver", kSimplexString);
+      use_simplex = true;
+    }
+  }
+  if (use_clarabel) {
+    assert(!valid_basis);
+    // M_MIP: solve root-node LP with Clarabel.
+    // Force crossover so that evaluateRootNode() can read a valid simplex
+    // basis via lp.getLpSolver().getBasis().
+    std::string saved_crossover;
+    lpsolver.getOptionValue("run_crossover", saved_crossover);
+    lpsolver.setOptionValue("run_crossover", kHighsOnString);
+    callstatus = lpsolver.optimizeLp();
+    lpsolver.setOptionValue("run_crossover", saved_crossover);
+    if (callstatus == HighsStatus::kError ||
+        lpsolver.getModelStatus() == HighsModelStatus::kSolveError ||
+        lpsolver.getModelStatus() == HighsModelStatus::kNotset) {
+      // Clarabel failed numerically — fall back to simplex for robustness.
+      highsLogDev(
+          mipsolver.options_mip_->log_options, HighsLogType::kWarning,
+          "HighsLpRelaxation::run Clarabel failed at root node: %s — "
+          "falling back to simplex\n",
+          lpsolver.modelStatusToString(lpsolver.getModelStatus()).c_str());
+      lpsolver.clearSolver();
       lpsolver.setOptionValue("solver", kSimplexString);
       use_simplex = true;
     }

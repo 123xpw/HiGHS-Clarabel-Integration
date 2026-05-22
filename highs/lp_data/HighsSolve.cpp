@@ -10,6 +10,7 @@
  */
 
 #include "ipm/IpxWrapper.h"
+#include "lp_data/HighsClarabelSolver.h"
 #include "lp_data/HighsSolutionDebug.h"
 #include "pdlp/CupdlpWrapper.h"
 #include "pdlp/HiPdlpWrapper.h"
@@ -186,6 +187,39 @@ HighsStatus solveLp(HighsLpSolverObject& solver_object, const string message) {
       }  // unwelcome_ipx_status
       // clang-format on
     }
+  } else if (useClarabel(options.solver)) {
+    // Use Clarabel (interior-point, compiles only when HIGHS_USE_CLARABEL)
+#ifdef HIGHS_USE_CLARABEL
+    try {
+      call_status = solveLpClarabel(solver_object);
+    } catch (const std::exception& exception) {
+      highsLogDev(options.log_options, HighsLogType::kError,
+                  "Exception %s in solveLpClarabel\n", exception.what());
+      call_status = HighsStatus::kError;
+    }
+    return_status = interpretCallStatus(options.log_options, call_status,
+                                        return_status, "solveLpClarabel");
+    if (return_status == HighsStatus::kError) return return_status;
+    // Clarabel is IPM-based: if the solution is optimal but no basis was
+    // produced (crossover disabled), fall back to simplex cleanup if the
+    // model status is unwelcome.
+    if (solver_object.model_status_ == HighsModelStatus::kUnknown) {
+      const bool allow_simplex_cleanup =
+          options.run_crossover != kHighsOffString;
+      if (allow_simplex_cleanup) {
+        highsLogUser(options.log_options, HighsLogType::kWarning,
+                     "Clarabel solution is imprecise, so clean up with simplex\n");
+        return_status = simplexSolve();
+        if (return_status == HighsStatus::kError) return return_status;
+      }
+    }
+#else
+    highsLogUser(options.log_options, HighsLogType::kError,
+                 "Clarabel is not available in this build. "
+                 "Reconfigure with -DUSE_CLARABEL=ON.\n");
+    solver_object.model_status_ = HighsModelStatus::kSolveError;
+    return HighsStatus::kError;
+#endif
   } else {
     // Use Simplex
     return_status = simplexSolve();
@@ -708,6 +742,10 @@ bool useIpm(const std::string& solver) {
 
 bool usePdlp(const std::string& solver) {
   return solver == kPdlpString || solver == kHiPdlpString;
+}
+
+bool useClarabel(const std::string& solver) {
+  return solver == kClarabelString;
 }
 
 // Decide whether to use the HiPO IPM solver
